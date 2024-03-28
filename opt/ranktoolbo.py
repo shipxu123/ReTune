@@ -11,12 +11,17 @@ from subprocess import run
 import torch
 import botorch
 from botorch.models import SingleTaskGP
+from botorch.models.pairwise_gp import PairwiseGP, PairwiseLaplaceMarginalLogLikelihood
 from gpytorch.mlls.sum_marginal_log_likelihood import SumMarginalLogLikelihood, ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_model
 from botorch.optim import optimize_acqf
 from botorch.acquisition.monte_carlo import qExpectedImprovement, qNoisyExpectedImprovement
 from botorch.sampling.samplers import SobolQMCNormalSampler
 from botorch.exceptions import BadInitialCandidatesWarning
+
+from botorch.models.transforms.input import Normalize
+from botorch.models.model_list_gp_regression import ModelListGP
+from botorch.acquisition.preference import AnalyticExpectedUtilityOfBestOption
 
 from utils.utils import *
 
@@ -104,13 +109,22 @@ class VanillaBO:
         return initX, initY
     
 
-    def initModel(self, trainX, trainY, stateDict=None): 
-        model = SingleTaskGP(trainX, trainY).to(trainX)
-        mll = ExactMarginalLogLikelihood(model.likelihood, model)
-        if stateDict is not None:
-            model.load_state_dict(stateDict)
+    def initModel(self, trainX, trainY): 
+        models = []
+        for idx in range(self._nObjs):
+            tmpY = trainY[..., idx:idx+1]
+            comparisons = self._generate_comparisons(tmpY, q_comp=self.q_comp, noise=0.0)
+            model = PairwiseGP(
+                trainX,
+                comparisons,
+                input_transform=Normalize(d=trainX.shape[-1]),
+            )
+            models.append(model)
+
+        model = ModelListGP(*models)
+        mll = PairwiseLaplaceMarginalLogLikelihood(model.likelihood, model)
         return mll, model
-    
+
 
     def getObservations(self, acqFunc):
         # optimize
@@ -127,7 +141,6 @@ class VanillaBO:
         newY = self.evalBatch(newX)
         return newX, newY
 
-        
     def optimize(self, steps=2**4, verbose=True): 
         bestX = None
         bestY = None
@@ -148,19 +161,22 @@ class VanillaBO:
         paretoParams, paretoValues = pareto(params, values)
         print(f'[Initial PARETO]: {paretoParams}, {paretoValues}')
         print(f'[Hypervolume]:', calcHypervolume(self._refpoint, paretoValues))
-        
-        for iter in range(steps):  
+
+        for iter in range(steps):
             t0 = time.time()
-            
+
             fit_gpytorch_model(mll)
-            qmcSampler = SobolQMCNormalSampler(num_samples=self._mcSamples)
-            qEI = qExpectedImprovement(
-                model=model, 
-                best_f=bestY,
-                sampler=qmcSampler
-            )
-            newX, newY = self.getObservations(qEI)
-                    
+            # qmcSampler = SobolQMCNormalSampler(num_samples=self._mcSamples)
+            # qEI = qExpectedImprovement(
+            #     model=model, 
+            #     best_f=bestY,
+            #     sampler=qmcSampler
+            # )
+            # newX, newY = self.getObservations(qEI)
+
+            acq_func = AnalyticExpectedUtilityOfBestOption(pref_model=model)
+            newX, newY = self.getObservations(acq_func)
+
             trainX = torch.cat([trainX, newX])
             trainY = torch.cat([trainY, newY])
 
