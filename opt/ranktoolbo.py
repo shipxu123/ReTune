@@ -2,6 +2,8 @@ import os
 import sys 
 sys.path.append(".")
 import time
+import random
+from itertools import combinations
 
 from os.path import abspath
 from datetime import datetime
@@ -52,6 +54,7 @@ class VanillaBO:
         self._bounds = torch.tensor([[0.0] * self._nDims, [1.0] * self._nDims], \
                                     device=DEVICE, dtype=DTYPE)
         self._visited = {}
+        self.n_comp = 1
 
     def _evalPoint(self, point): 
         values = []
@@ -84,12 +87,13 @@ class VanillaBO:
 
     def evalPoint(self, point): 
         score = self._evalPoint(point)
-        assert len(score) <= len(self._weights)
-        cost = 0.0
-        for idx, elem in enumerate(score): 
-            cost += self._weights[idx] * elem
+        return score
+        #assert len(score) <= len(self._weights)
+        #cost = 0.0
+        #for idx, elem in enumerate(score): 
+        #    cost += self._weights[idx] * elem
 
-        return -cost
+        #return -cost
 
     def evalBatch(self, batch): 
         if isinstance(batch, list): 
@@ -101,41 +105,60 @@ class VanillaBO:
             cost = self.evalPoint(param)
             results.append(cost)
         
-        return torch.tensor(results, device=DEVICE).unsqueeze(-1)
+        results = torch.tensor(results, device=DEVICE)
+
+        # minimize power and area
+        results[:, 1] *= -1.0
+        results[:, 2] *= -1.0
+
+        return results
 
     def initSamples(self): 
         initX = torch.rand(self._nInit, self._nDims, device=DEVICE, dtype=DTYPE)
         initY = self.evalBatch(initX)
         return initX, initY
+
+    def _generate_comparisons(self, y, n_comp, noise=0.0, replace=False):
+        """Create pairwise comparisons with noise(non-dominate)"""
+        # generate all possible pairs of elements in y
+        all_pairs = np.array(list(combinations(range(y.shape[0]), 2)))
+        # randomly select n_comp pairs from all_pairs
+        comp_pairs = all_pairs[
+            np.random.choice(range(len(all_pairs)), n_comp, replace=replace)
+        ]
+        # add gaussian noise to the latent y values
+        c0 = y[comp_pairs[:, 0]] + np.random.standard_normal(len(comp_pairs)) * noise
+        c1 = y[comp_pairs[:, 1]] + np.random.standard_normal(len(comp_pairs)) * noise
+        # reverse_comp = (c0 < c1).numpy()
+        reverse_comp = (c0 < c1).numpy().all(axis=-1)
+        comp_pairs[reverse_comp, :] = np.flip(comp_pairs[reverse_comp, :], 1)
+        comp_pairs = torch.tensor(comp_pairs).long()
     
+        return comp_pairs
 
     def initModel(self, trainX, trainY): 
         models = []
-        for idx in range(self._nObjs):
-            tmpY = trainY[..., idx:idx+1]
-            comparisons = self._generate_comparisons(tmpY, q_comp=self.q_comp, noise=0.0)
-            model = PairwiseGP(
-                trainX,
-                comparisons,
-                input_transform=Normalize(d=trainX.shape[-1]),
-            )
-            models.append(model)
-
-        model = ModelListGP(*models)
+        comparisons = self._generate_comparisons(trainY, n_comp=self.n_comp, noise=0.0)
+        model = PairwiseGP(
+            trainX,
+            comparisons,
+            input_transform=Normalize(d=trainX.shape[-1]),
+        )
         mll = PairwiseLaplaceMarginalLogLikelihood(model.likelihood, model)
         return mll, model
 
 
     def getObservations(self, acqFunc):
         # optimize
+        # q = 2 number of points per query
         candidates, _ = optimize_acqf(
             acq_function=acqFunc,
             bounds=self._bounds,
-            q=self._batchSize,
+            q=2,
             num_restarts=self._numRestarts,
             raw_samples=self._rawSamples,  # used for intialization heuristic
-            options={"batch_limit": 5, "maxiter": 200},
         )
+
         # observe new values 
         newX = candidates.detach()
         newY = self.evalBatch(newX)
@@ -149,7 +172,10 @@ class VanillaBO:
         mll, model = self.initModel(trainX, trainY)
         initX = trainX.cpu().numpy()
         initY = trainY.cpu().numpy()
-        index = initY.argmax()
+        #index = initY.argmax()
+        index = get_non_dominated(initY).numpy()
+        print(f"index: {index}")
+        print(f"initY Shape : {initY.shape}")
         bestX = initX[index]
         bestY = initY[index]
 
@@ -166,13 +192,6 @@ class VanillaBO:
             t0 = time.time()
 
             fit_gpytorch_model(mll)
-            # qmcSampler = SobolQMCNormalSampler(num_samples=self._mcSamples)
-            # qEI = qExpectedImprovement(
-            #     model=model, 
-            #     best_f=bestY,
-            #     sampler=qmcSampler
-            # )
-            # newX, newY = self.getObservations(qEI)
 
             acq_func = AnalyticExpectedUtilityOfBestOption(pref_model=model)
             newX, newY = self.getObservations(acq_func)
@@ -182,13 +201,15 @@ class VanillaBO:
 
             tmpX = trainX.cpu().numpy()
             tmpY = trainY.cpu().numpy()
-            index = tmpY.argmax()
+            #index = tmpY.argmax()
+            index = get_non_dominated(tmpY).numpy()
             bestX = tmpX[index]
             bestY = tmpY[index]
 
             tmpBatchX = newX.cpu().numpy()
             tmpBatchY = newY.cpu().numpy()
-            index = tmpBatchY.argmax()
+            #index = tmpBatchY.argmax()
+            index = get_non_dominated(tmpBatchY).numpy()
             bestBatchX = tmpBatchX[index]
             bestBatchY = tmpBatchY[index]
 
@@ -242,24 +263,29 @@ if __name__ == "__main__":
         run = runPythonCommand
     
     iter = 0
-    def funcEval(config): 
+    #def funcEval(config): 
+    #    global iter
+    #    filename = folder + f"/run{iter}.log"
+    #    ret = run(command, config, timeout, filename)
+    #    results = [refpoint, ] * nobjs
+    #    try: 
+    #        with open(filename, "r") as fin: 
+    #            lines = fin.readlines()
+    #            splited = lines[0].split()
+    #            for idx, elem in enumerate(splited): 
+    #                if len(elem) > 0 and idx < len(results): 
+    #                    results[idx] = float(elem)  
+    #    except Exception: 
+    #        pass
+    #    iter += 1
+    #    
+    #    return results
+    def funcEval(config):
         global iter
-        filename = folder + f"/run{iter}.log"
-        ret = run(command, config, timeout, filename)
-        results = [refpoint, ] * nobjs
-        try: 
-            with open(filename, "r") as fin: 
-                lines = fin.readlines()
-                splited = lines[0].split()
-                for idx, elem in enumerate(splited): 
-                    if len(elem) > 0 and idx < len(results): 
-                        results[idx] = float(elem)  
-        except Exception: 
-            pass
+        results = [random.random() * 150  for _ in range(nobjs)]
         iter += 1
-        
         return results
-    
+
     names, types, ranges = readConfig(configfile)
     ndims = len(names)
     model = VanillaBO(ndims, nobjs, names, types, ranges, funcEval, refpoint=refpoint, weights=[1.0/nobjs] * nobjs, nInit=ninit, batchSize=int(args.batchsize))
