@@ -1,0 +1,47 @@
+# Global
+route_chan_width int 50 200
+constant_net_method enum global route
+clock_modeling enum ideal route dedicated_network
+
+# Pack
+connection_driven_clustering enum on off
+allow_unrelated_clustering enum on off auto
+alpha_clustering float 0.0 1.0
+beta_clustering float 0.0 1.0
+timing_driven_clustering enum on off
+cluster_seed_type enum blend timing max_inputs max_pins max_input_pins blend2
+balance_block_type_utilization enum on off auto
+pack_prioritize_transitive_connectivity enum on off
+pack_high_fanout_threshold int 16 128
+pack_transitive_fanout_threshold int 2 16
+
+# Place
+seed int 0 1023
+enable_timing_computations enum on off
+inner_num float 0.2 5.0
+init_t float 20.0 200.0
+exit_t float 0.0001 0.1
+alpha_t float 0.59 0.99
+fix_pins enum free random
+place_algorithm enum bounding_box path_timing_driven
+place_rlim_escape float 0.0 0.2
+timing_tradeoff float 0.0 1.0
+place_delay_model enum delta delta_override
+place_delay_model_reducer enum min max median arithmean geomean
+
+# Route
+max_router_iterations int 20 100
+first_iter_pres_fac float 0.0 0.2
+bb_factor int 1 5
+base_cost_type enum demand_only delay_normalized delay_normalized_length delay_normalized_frequency delay_normalized_length_frequency
+route_type enum global detailed
+router_algorithm enum breadth_first timing_driven
+astar_fac float 1.0 2.0
+max_criticality float 0.8 1.0
+incremental_reroute_delay_ripup enum on off auto
+routing_failure_predictor enum safe aggressive off
+routing_budgets_algorithm enum disable minimax scale_delay
+congested_routing_iteration_threshold float 0.8 1.0
+pack_high_fanout_threshold int 16 128
+route_bb_update enum static dynamic
+router_lookahead enum classic map
