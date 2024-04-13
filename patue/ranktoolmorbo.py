@@ -4,12 +4,17 @@ sys.path.append(".")
 import math
 import time
 import random
+from itertools import combinations
+
 import multiprocessing as mp
 from dataclasses import dataclass
 
 from sklearn.cluster import KMeans
 
 import torch
+
+from botorch.models.pairwise_gp import PairwiseGP, PairwiseLaplaceMarginalLogLikelihood
+
 from botorch.acquisition import qExpectedImprovement
 from botorch.fit import fit_gpytorch_model
 from botorch.generation import MaxPosteriorSampling
@@ -28,6 +33,9 @@ from gpytorch.mlls import ExactMarginalLogLikelihood
 from gpytorch.priors import HorseshoePrior
 from botorch.models.model_list_gp_regression import ModelListGP
 from gpytorch.mlls.sum_marginal_log_likelihood import SumMarginalLogLikelihood
+
+from botorch.models.transforms.input import Normalize
+from botorch.acquisition.preference import AnalyticExpectedUtilityOfBestOption
 
 from utils.utils import *
 
@@ -124,12 +132,13 @@ class Morbo:
 
     def evalPoint(self, point): 
         score = self._evalPoint(point).copy()
-        for idx in range(len(score)): 
+        for idx in range(len(score)):
+            # here, will -score has some issues?: No. Cycle.
             score[idx] = -score[idx]
 
         return score
 
-    def evalBatch(self, batch): 
+    def evalBatch(self, batch):
         if not isinstance(batch, torch.Tensor): 
             batch = torch.tensor(batch, dtype=DTYPE, device=DEVICE)
         results = []
@@ -137,7 +146,7 @@ class Morbo:
 
         processes = []
         pool = mp.Pool(processes=self._nJobs)
-        for jdx in range(batch.shape[0]): 
+        for jdx in range(batch.shape[0]):
             param = batch[jdx]
             process = pool.apply_async(self.evalPoint, (param, ))
             processes.append(process)
@@ -145,16 +154,16 @@ class Morbo:
         pool.close()
         pool.join()
 
-        for idx in range(batch.shape[0]): 
+        for idx in range(batch.shape[0]):
             cost = processes[idx].get()
             results.append(cost)
         results = np.array(results)
 
-        for idx in range(batch.shape[0]): 
+        for idx in range(batch.shape[0]):
             name = str(list(batch[idx]))
-            if not name in self._visited: 
+            if not name in self._visited:
                 self._visited[name] = list(-results[idx])
-        
+
         return torch.tensor(results, device=DEVICE, dtype=DTYPE)
 
     def initSamples(self, ninit=None): 
@@ -164,18 +173,33 @@ class Morbo:
         initY = self.evalBatch(initX)
         return initX, initY
 
+    def _generate_comparisons(self, y, n_comp, noise=0.0, replace=False):
+        """Create pairwise comparisons with noise(non-dominate)"""
+        # generate all possible pairs of elements in y
+        all_pairs = np.array(list(combinations(range(y.shape[0]), 2)))
+        # randomly select n_comp pairs from all_pairs
+        comp_pairs = all_pairs[
+            np.random.choice(range(len(all_pairs)), n_comp, replace=replace)
+        ]
+        # add gaussian noise to the latent y values
+        c0 = y[comp_pairs[:, 0]] + np.random.standard_normal(len(comp_pairs)) * noise
+        c1 = y[comp_pairs[:, 1]] + np.random.standard_normal(len(comp_pairs)) * noise
+        # reverse_comp = (c0 < c1).numpy()
+        reverse_comp = (c0 < c1).numpy().all(axis=-1)
+        comp_pairs[reverse_comp, :] = np.flip(comp_pairs[reverse_comp, :], 1)
+        comp_pairs = torch.tensor(comp_pairs).long()
+    
+        return comp_pairs
+
     def initModel(self, trainX, trainY): 
         models = []
-        for idx in range(self._nObjs):
-            tmpY = trainY[..., idx:idx+1]
-            likelihood = GaussianLikelihood(noise_constraint=Interval(1e-8, 1e-3))
-            covar_module = ScaleKernel(
-                MaternKernel(nu=2.5, ard_num_dims=self._nDims)
-            )
-            model = SingleTaskGP(trainX, tmpY, covar_module=covar_module, likelihood=likelihood)
-            models.append(model)
-        model = ModelListGP(*models)
-        mll = SumMarginalLogLikelihood(model.likelihood, model)
+        comparisons = self._generate_comparisons(trainY, n_comp=self.n_comp, noise=0.0)
+        model = PairwiseGP(
+            trainX,
+            comparisons,
+            input_transform=Normalize(d=trainX.shape[-1]),
+        )
+        mll = PairwiseLaplaceMarginalLogLikelihood(model.likelihood, model)
         return mll, model
 
 
@@ -198,7 +222,7 @@ class Morbo:
         return initHV
 
 
-    def getObservations(self, index):
+    def getObservations(self, index, verbose=True):
         print("[GetObservations]", index)
         state = self._states[index]
         trainX = self._dataXY[index][0]
@@ -214,6 +238,7 @@ class Morbo:
         for idx, param in enumerate(list(initX)): 
             initParams.append(list(param))
             initValues.append(list(-initY[idx]))
+
         initParetoParams, initParetoValues = pareto(initParams, initValues)
         print(initParetoValues)
         initHV = calcHypervolume(self._refpoint, initParetoValues)
@@ -256,43 +281,19 @@ class Morbo:
         mll, model = self.initModel(dataX, dataY)
         fit_gpytorch_model(mll)
 
-        # Sample on the candidate points
-        predX = None
-        for submodel in model.models: 
-            dim = trainX.shape[-1]
-            sobol = SobolEngine(dim, scramble=True)
-            candX = sobol.draw(1024 * 4).to(dtype=DTYPE, device=DEVICE)
-            candX = tr_lb + (tr_ub - tr_lb) * candX
-            with gpts.fast_computations(covar_root_decomposition=True): 
-                with torch.no_grad():  # We don't need gradients when using TS
-                    thompson_sampling = MaxPosteriorSampling(model=submodel, replacement=False)
-                    tmp = thompson_sampling(candX, num_samples=1024)
-                if predX is None: 
-                    predX = tmp
-                else: 
-                    predX = torch.cat([predX, tmp],)
-        predY = torch.zeros([predX.shape[0], self._nObjs], dtype=DTYPE, device=DEVICE)
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            for idx, submodel in enumerate(model.models): 
-                submodel.eval()
-                mll.eval()
-                predY[:, idx] = mll.likelihood(submodel(predX))[0].sample()
-        predX = predX.cpu().numpy()
-        predY = predY.cpu().numpy()
-        hvi = []
-        for idx in range(predX.shape[0]): 
-            tmp1 = list(predX[idx])
-            tmp2 = list(-predY[idx])
-            newParetoParams, newParetoValues = newParetoSet(initParetoParams, initParetoValues, tmp1, tmp2)
-            newHV = calcHypervolume(self._refpoint, newParetoValues)
-            hvi.append(newHV - initHV)
-        indices = list(range(len(hvi)))
-        indices = sorted(indices, key=lambda x: (-hvi[x], -np.sum(np.abs(predY[x] - np.array(self._refpoint)))))
-        hvi = np.array(hvi)
-        indices = indices[:self._batchSize]
-        print(" -> [Sampling]:", indices, "HVI:", hvi[indices])
+        # Pairwise Rank BO
+        tr_bounds = torch.concat([tr_lb, tr_ub], axis=0)
+        acq_func = AnalyticExpectedUtilityOfBestOption(pref_model=model)
+        candidates, _ = optimize_acqf(
+            acq_function=acq_func,
+            bounds=tr_bounds,
+            q=32 * 2,
+            num_restarts=self._numRestarts,
+            raw_samples=self._rawSamples,  # used for intialization heuristic
+        )
 
-        newX = torch.tensor(predX[indices], dtype=DTYPE, device=DEVICE)
+        # observe new values 
+        newX = candidates.detach()
         newY = self.evalBatch(newX)
 
         return newX, newY
@@ -353,6 +354,7 @@ class Morbo:
             for region in range(regions): 
                 with gpytorch.settings.max_cholesky_size(float("inf")):
                     newX, newY = self.getObservations(region)
+
                 self._dataXY[region][0] = torch.cat([self._dataXY[region][0], newX])
                 self._dataXY[region][1] = torch.cat([self._dataXY[region][1], newY])
                 self._dataAllX = torch.cat([self._dataAllX, newX])

@@ -108,6 +108,7 @@ class VanillaBO:
         results = torch.tensor(results, device=DEVICE)
 
         # minimize power and area
+        results[:, 0] *= -1.0
         results[:, 1] *= -1.0
         results[:, 2] *= -1.0
 

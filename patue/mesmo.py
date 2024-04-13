@@ -16,7 +16,7 @@ from utils.utils import *
 from utils.mesmo import GaussianProcess, MaxvalueEntropySearch
 
 DEVICE = torch.device("cpu")
-DTYPE = torch.double
+DTYPE = torch.double    
 
 class MESMO: 
 
@@ -48,9 +48,9 @@ class MESMO:
         self._multiplemes=[]
         for idx in range(self._nObjs):
             self._GPs.append(GaussianProcess(self._nDims))
-            
+
         self._visited = {}
-        
+
     def optimize(self, steps=2**8, timeout=None): 
         def objective(variables): 
             values = []
@@ -79,7 +79,7 @@ class MESMO:
                 fout.write(str(config) + "\n")
                 fout.write(str(score) + "\n")
             return score
-        
+
         # Init
         index = np.random.randint(0, self._grid.shape[0])
         for idx in range(self._nInit):
@@ -147,7 +147,6 @@ class MESMO:
                     multi_obj_acq_total = multi_obj_acq_total + multi_obj_acq_sample
                 return (multi_obj_acq_total / self._samplesNSGA)
 
-            
             # l-bfgs-b acquisation optimization
             x_tries = np.random.uniform(self._bound[0], self._bound[1], size=(self._iterNewton, self._nDims))
             y_tries = [mesmo_acq(x) for x in x_tries]
