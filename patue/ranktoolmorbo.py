@@ -101,7 +101,7 @@ class Morbo:
         self._bounds = torch.tensor([[0.0] * self._nDims, [1.0] * self._nDims], \
                                     device=DEVICE, dtype=DTYPE)
         self._visited = {}
-        self.n_comp = 0.25
+        self.p_comp = 0.25
 
     def _evalPoint(self, point): 
         values = []
