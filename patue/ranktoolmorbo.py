@@ -82,7 +82,7 @@ class MorboState:
 
 class Morbo: 
 
-    def __init__(self, nDims, nObjs, nameVars, typeVars, rangeVars, funcEval, refpoint, weights, nInit=2**4, batchSize=2, mcSamples=1024, nJobs=4): 
+    def __init__(self, nDims, nObjs, nameVars, typeVars, rangeVars, funcEval, refpoint, weights, nInit=2**4, batchSize=2, numRestarts=10, mcSamples=1024, nJobs=4): 
         self._nDims      = nDims
         self._nObjs      = nObjs
         self._nameVars   = nameVars
@@ -95,6 +95,7 @@ class Morbo:
         self._refpoint = [refpoint] * self._nObjs
         self._weights = weights
         self._nInit = nInit
+        self._numRestarts = numRestarts
         self._batchSize = batchSize
         self._mcSamples = mcSamples
         self._nJobs = nJobs
