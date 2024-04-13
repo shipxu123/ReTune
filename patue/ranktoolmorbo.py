@@ -101,6 +101,7 @@ class Morbo:
         self._bounds = torch.tensor([[0.0] * self._nDims, [1.0] * self._nDims], \
                                     device=DEVICE, dtype=DTYPE)
         self._visited = {}
+        self.n_comp = 0.25
 
     def _evalPoint(self, point): 
         values = []
@@ -173,13 +174,13 @@ class Morbo:
         initY = self.evalBatch(initX)
         return initX, initY
 
-    def _generate_comparisons(self, y, n_comp, noise=0.0, replace=False):
-        """Create pairwise comparisons with noise(non-dominate)"""
+    def _generate_comparisons(self, y, p_comp=0.5, noise=0.25, replace=False):
+        """Create pairwise comparisons with noise(delta-dominate)"""
         # generate all possible pairs of elements in y
         all_pairs = np.array(list(combinations(range(y.shape[0]), 2)))
         # randomly select n_comp pairs from all_pairs
         comp_pairs = all_pairs[
-            np.random.choice(range(len(all_pairs)), n_comp, replace=replace)
+            np.random.choice(range(len(all_pairs)), len(all_pairs) * p_comp, replace=replace)
         ]
         # add gaussian noise to the latent y values
         c0 = y[comp_pairs[:, 0]] + np.random.standard_normal(len(comp_pairs)) * noise
@@ -188,12 +189,12 @@ class Morbo:
         reverse_comp = (c0 < c1).numpy().all(axis=-1)
         comp_pairs[reverse_comp, :] = np.flip(comp_pairs[reverse_comp, :], 1)
         comp_pairs = torch.tensor(comp_pairs).long()
-    
+
         return comp_pairs
 
     def initModel(self, trainX, trainY): 
         models = []
-        comparisons = self._generate_comparisons(trainY, n_comp=self.n_comp, noise=0.0)
+        comparisons = self._generate_comparisons(trainY, p_comp=self.p_comp, noise=0.0)
         model = PairwiseGP(
             trainX,
             comparisons,
@@ -292,7 +293,7 @@ class Morbo:
             raw_samples=self._rawSamples,  # used for intialization heuristic
         )
 
-        # observe new values 
+        # observe new values
         newX = candidates.detach()
         newY = self.evalBatch(newX)
 
@@ -328,6 +329,7 @@ class Morbo:
 
         initParams = []
         initValues = []
+
         for region in range(regions): 
             trainX, trainY = trainXs[region], trainYs[region]
             state = MorboState(dim=self._nDims, batch_size=self._batchSize)
@@ -346,6 +348,7 @@ class Morbo:
                 self._dataAllY = trainY
             else: 
                 self._dataAllY = torch.cat([self._dataAllY, trainY])
+
         paretoParams, paretoValues = pareto(initParams, initValues)
         print(f'[Initial PARETO]: {paretoParams}, {paretoValues}')
         print(f'[Hypervolume]:', calcHypervolume(self._refpoint, paretoValues))
