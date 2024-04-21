@@ -181,7 +181,7 @@ class Morbo:
         all_pairs = np.array(list(combinations(range(y.shape[0]), 2)))
         # randomly select n_comp pairs from all_pairs
         comp_pairs = all_pairs[
-            np.random.choice(range(len(all_pairs)), int(len(all_pairs) * p_comp), replace=replace)
+            np.random.choice(range(len(all_pairs)), int(len(all_pairs) * p_comp) + 1, replace=replace)
         ]
         # add gaussian noise to the latent y values
         c0 = y[comp_pairs[:, 0]] + np.random.standard_normal(len(comp_pairs)) * noise

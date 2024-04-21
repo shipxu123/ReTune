@@ -333,7 +333,7 @@ class Morbo:
             newParams = []
             newValues = []
             for jdx, param in enumerate(list(initX)): 
-                if idx == jdx: 
+                if idx == jdx:
                     continue
                 newParams.append(list(param))
                 newValues.append(list(-initY[jdx]))
