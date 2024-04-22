@@ -122,6 +122,60 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
         else:
             return torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1) * e_n.narrow(kernel_dim, 1, num_dimensions)).sum(dim=kernel_dim) + stabilizer)
 
+from typing import Optional
+
+from botorch.models.gpytorch import GPyTorchModel
+from gpytorch.distributions import MultivariateNormal
+from gpytorch.kernels import RBFKernel, ScaleKernel
+from gpytorch.likelihoods import GaussianLikelihood
+from gpytorch.means import ConstantMean
+from gpytorch.models import ExactGP
+from torch import Tensor
+
+
+class SimpleCustomGP(ExactGP, GPyTorchModel):
+
+    _num_outputs = 1  # to inform GPyTorchModel API
+
+    def __init__(self, train_X, train_Y, train_Yvar: Optional[Tensor] = None):
+        # NOTE: This ignores train_Yvar and uses inferred noise instead.
+        # squeeze output dim before passing train_Y to ExactGP
+        super().__init__(train_X, train_Y.squeeze(-1), GaussianLikelihood())
+
+        n_vertices = [4, 4, 3, 5, 4, 5]
+        adjacency_mat = []
+        fourier_freq = []
+        fourier_basis = []
+
+        for i in range(len(n_vertices)):
+            n_v = n_vertices[i]
+            adjmat = torch.diag(torch.ones(n_v - 1), -1) + torch.diag(torch.ones(n_v - 1), 1)
+            adjacency_mat.append(adjmat)
+            laplacian = torch.diag(torch.sum(adjmat, dim=0)) - adjmat
+            eigval, eigvec = torch.symeig(laplacian, eigenvectors=True)
+            fourier_freq.append(eigval)
+            fourier_basis.append(eigvec)
+
+        n_vertices = n_vertices
+        adj_mat_list = adjacency_mat
+        grouped_log_beta = torch.ones(len(fourier_freq))
+        log_order_variances = torch.zeros((num_discrete + num_continuous))
+        fourier_freq_list = fourier_freq
+        fourier_basis_list = fourier_basis
+        lengthscales = torch.zeros(num_continuous)
+
+        self.mean_module = ConstantMean()
+        self.covar_module = MixedDiffusionKernel(log_order_variances=log_order_variances, grouped_log_beta=grouped_log_beta,
+            fourier_freq_list=fourier_freq_list,
+            fourier_basis_list=fourier_basis_list, lengthscales=lengthscales,
+            num_discrete=num_discrete, num_continuous=num_continuous)
+        self.to(train_X)  # make sure we're on the right device/dtype
+
+    def forward(self, x):
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return MultivariateNormal(mean_x, covar_x)
+
 if __name__ == '__main__':
     dimension = 8
     num_discrete = 6
@@ -158,3 +212,8 @@ if __name__ == '__main__':
     x1 = torch.ones([1, dimension])
     x2 = torch.zeros([1, dimension])
     print(kernel.forward(x1, x2))
+
+    Xs = torch.ones([1000, dimension])
+    Ys = torch.zeros([1000, dimension])
+    gp = SimpleCustomGP(Xs[:980], Ys)
+    print(gp.forward(Xs[980:]))
