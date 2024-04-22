@@ -15,26 +15,19 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
                  lengthscales,
                  num_discrete,
                  num_continuous):
-        self.log_amp = gpytorch.kernels.Kernel.register_parameter(
-            name='log_amp',
-            parameter=torch.nn.Parameter(torch.FloatTensor(1))
-        )
-        self.log_order_variances = gpytorch.kernels.Kernel.register_parameter(
-            name='log_order_variances',
-            parameter=torch.nn.Parameter(log_order_variances)
-        )
+        super().__init__(self)
+
+        self.log_amp = parameter=torch.nn.Parameter(torch.FloatTensor(1))
+        self.log_order_variances = log_order_variances
         self.grouped_log_beta = grouped_log_beta
         self.fourier_freq_list = fourier_freq_list
         self.fourier_basis_list = fourier_basis_list
-        self.lengthscales = gpytorch.kernels.Kernel.register_parameter(
-            name='lengthscales',
-            parameter=torch.nn.Parameter(lengthscales)
-        )
+        self.lengthscales = lengthscales
         self.num_discrete = num_discrete
         self.num_continuous = num_continuous
-        assert self.log_order_variances.size(0) == self.num_continuous + self.num_discrete, "order variances are not properly initialized"
-        assert self.lengthscales.size(0) == self.num_continuous, "lengthscales is not properly initialized"
-        assert self.grouped_log_beta.size(0) == self.num_discrete, "beta is not properly initialized"
+        #assert self.log_order_variances.size(0) == self.num_continuous + self.num_discrete, "order variances are not properly initialized"
+        #assert self.lengthscales.size(0) == self.num_continuous, "lengthscales is not properly initialized"
+        #assert self.grouped_log_beta.size(0) == self.num_discrete, "beta is not properly initialized"
 
     def n_params(self):
         return 1 
@@ -46,7 +39,7 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
         assert vec.numel() == 1 # self.num_discrete + self.num_continuous
         self.log_amp = vec[:1].clone()
 
-    def forward(self, x1, x2=None, diagonal=False):
+    def forward(self, x1, x2, diagonal=False):
         """
         :param x1, x2: each row is a vector with vertex numbers starting from 0 for each 
         :return: 
