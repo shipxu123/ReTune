@@ -39,7 +39,7 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
         assert vec.numel() == 1 # self.num_discrete + self.num_continuous
         self.log_amp = vec[:1].clone()
 
-    def forward(self, x1, x2, diagonal=False):
+    def forward(self, x1, x2=None, diagonal=False):
         """
         :param x1, x2: each row is a vector with vertex numbers starting from 0 for each 
         :return: 
@@ -101,7 +101,6 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
         m1 = torch.tensor([-1.0])
         shape[kernel_dim] = -1
 
-
         for deg in range(1, num_dimensions + 1):  # deg goes from 1 to R (it's 1-indexed!)
             ks = torch.arange(1, deg + 1, dtype=torch.float).reshape(*shape)  # use for pow
             kslong = torch.arange(1, deg + 1, dtype=torch.long)  # use for indexing
@@ -121,6 +120,7 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
                 dim=kernel_dim) + stabilizer)
         else:
             return torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1) * e_n.narrow(kernel_dim, 1, num_dimensions)).sum(dim=kernel_dim) + stabilizer)
+
 
 from typing import Optional
 
@@ -169,12 +169,14 @@ class SimpleCustomGP(ExactGP, GPyTorchModel):
             fourier_freq_list=fourier_freq_list,
             fourier_basis_list=fourier_basis_list, lengthscales=lengthscales,
             num_discrete=num_discrete, num_continuous=num_continuous)
-        self.to(train_X)  # make sure we're on the right device/dtype
 
     def forward(self, x):
         mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
+        covar_x = self.covar_module.forward(x)
+        print(mean_x.shape)
+        print(covar_x.shape)
         return MultivariateNormal(mean_x, covar_x)
+
 
 if __name__ == '__main__':
     dimension = 8
@@ -213,7 +215,8 @@ if __name__ == '__main__':
     x2 = torch.zeros([1, dimension])
     print(kernel.forward(x1, x2))
 
-    Xs = torch.ones([1000, dimension])
-    Ys = torch.zeros([1000, dimension])
-    gp = SimpleCustomGP(Xs[:980], Ys)
-    print(gp.forward(Xs[980:]))
+    Xs = torch.rand([1000, dimension])
+    Ys = torch.rand([1000])
+    gp = SimpleCustomGP(Xs[:980, :], Ys[:980])
+    a = gp.forward(Xs[980:, :])
+    print(a.sample())
