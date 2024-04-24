@@ -39,10 +39,10 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
         assert vec.numel() == 1 # self.num_discrete + self.num_continuous
         self.log_amp = vec[:1].clone()
 
-    def forward(self, x1, x2=None, diagonal=False):
+    def forward(self, x1, x2=None, diagonal=True):
         """
         :param x1, x2: each row is a vector with vertex numbers starting from 0 for each 
-        :return: 
+        :return:
         """
         if diagonal:
             assert x2 is None
@@ -115,11 +115,13 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
 
         order_variances = torch.exp(self.log_order_variances)
         if kernel_dim == -3:
-            kernel_mat = torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1).unsqueeze(-1) * e_n.narrow(kernel_dim, 1, num_dimensions)).sum(dim=kernel_dim)) + stabilizer
-            return torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1).unsqueeze(-1) * e_n.narrow(kernel_dim, 1, num_dimensions)).sum(
-                dim=kernel_dim) + stabilizer)
+            kernel_mat = torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1).unsqueeze(-1) * \
+                                                      e_n.narrow(kernel_dim, 1, num_dimensions)).sum(dim=kernel_dim)) + stabilizer
+            return kernel_mat
         else:
-            return torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1) * e_n.narrow(kernel_dim, 1, num_dimensions)).sum(dim=kernel_dim) + stabilizer)
+            kernel_mat =  torch.exp(self.log_amp) * ((order_variances.unsqueeze(-1) *\
+                                                e_n.narrow(kernel_dim, 1, num_dimensions)).sum(dim=kernel_dim) + stabilizer)
+            return kernel_mat
 
 
 from typing import Optional
@@ -133,7 +135,7 @@ from gpytorch.models import ExactGP
 from torch import Tensor
 
 
-class SimpleCustomGP(ExactGP, GPyTorchModel):
+class HyGP(ExactGP, GPyTorchModel):
 
     _num_outputs = 1  # to inform GPyTorchModel API
 
@@ -142,7 +144,8 @@ class SimpleCustomGP(ExactGP, GPyTorchModel):
         # squeeze output dim before passing train_Y to ExactGP
         super().__init__(train_X, train_Y.squeeze(-1), GaussianLikelihood())
 
-        n_vertices = [4, 4, 3, 5, 4, 5]
+        # floating() + sys + fp + gp + dp + routing
+        n_vertices = [7] * 3 + [105] * 105 + [7] * 4 + [10] * 10 + [3] * 3 + [9] * 9
         adjacency_mat = []
         fourier_freq = []
         fourier_basis = []
@@ -179,12 +182,16 @@ class SimpleCustomGP(ExactGP, GPyTorchModel):
 
 
 if __name__ == '__main__':
-    dimension = 8
-    num_discrete = 6
-    num_continuous = 2
+    dimension = 134
+    num_discrete = 131
+    num_continuous = 3
     print(f"num_discrete: {num_discrete}, num_continuous: {num_continuous}")
 
-    n_vertices = [4, 4, 3, 5, 4, 5]
+    # n_vertices = [4, 4, 3, 5, 4, 5]
+
+    # floating() + sys + fp + gp + dp + routing
+    n_vertices = [7] * 3 + [105] * 105 + [7] * 4 + [10] * 10 + [3] * 3 + [9] * 9
+
     adjacency_mat = []
     fourier_freq = []
     fourier_basis = []
@@ -217,6 +224,6 @@ if __name__ == '__main__':
 
     Xs = torch.rand([1000, dimension])
     Ys = torch.rand([1000])
-    gp = SimpleCustomGP(Xs[:980, :], Ys[:980])
+    gp = HyGP(Xs[:980, :], Ys[:980])
     a = gp.forward(Xs[980:, :])
     print(a.sample())

@@ -19,6 +19,7 @@ from botorch.sampling.samplers import SobolQMCNormalSampler
 from botorch.exceptions import BadInitialCandidatesWarning
 
 from utils.utils import *
+from models.hygp import HyGP
 
 # DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # DTYPE = torch.float if torch.cuda.is_available() else torch.double
@@ -106,7 +107,7 @@ class VanillaBO:
     
 
     def initModel(self, trainX, trainY, stateDict=None): 
-        model = SingleTaskGP(trainX, trainY).to(trainX)
+        model = HyGP(trainX, trainY).to(trainX)
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         if stateDict is not None:
             model.load_state_dict(stateDict)
@@ -128,7 +129,7 @@ class VanillaBO:
         newY = self.evalBatch(newX)
         return newX, newY
 
-        
+
     def optimize(self, steps=2**4, verbose=True): 
         bestX = None
         bestY = None
