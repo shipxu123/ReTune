@@ -10,10 +10,10 @@ from subprocess import run
 
 import torch
 import botorch
-from botorch.models import SingleTaskGP
+from botorch.models import SingleTaskGP, MixedSingleTaskGP
 from gpytorch.mlls.sum_marginal_log_likelihood import SumMarginalLogLikelihood, ExactMarginalLogLikelihood
 from botorch.fit import fit_gpytorch_model
-from botorch.optim import optimize_acqf
+from botorch.optim import optimize_acqf, optimize_acqf_mixed
 from botorch.acquisition.monte_carlo import qExpectedImprovement, qNoisyExpectedImprovement
 from botorch.sampling.samplers import SobolQMCNormalSampler
 from botorch.exceptions import BadInitialCandidatesWarning
@@ -98,25 +98,24 @@ class VanillaBO:
             results.append(cost)
         
         return torch.tensor(results, device=DEVICE).unsqueeze(-1)
-    
 
     def initSamples(self): 
         initX = torch.rand(self._nInit, self._nDims, device=DEVICE, dtype=DTYPE)
         initY = self.evalBatch(initX)
         return initX, initY
-    
 
-    def initModel(self, trainX, trainY, stateDict=None): 
-        model = HyGP(trainX, trainY).to(trainX)
+    def initModel(self, trainX, trainY, stateDict=None):
+        # without graph information here, can be regarded as a mixed GP
+        model = MixedSingleTaskGP(trainX, trainY, cat_dims=[i for i in range(0, 105)] + [i for i in range(105, 108)]
+                                   + [i for i in range(111, 134)] ).to(trainX)
         mll = ExactMarginalLogLikelihood(model.likelihood, model)
         if stateDict is not None:
             model.load_state_dict(stateDict)
         return mll, model
-    
 
     def getObservations(self, acqFunc):
         # optimize
-        candidates, _ = optimize_acqf(
+        candidates, _ = optimize_acqf_mixed(
             acq_function=acqFunc,
             bounds=self._bounds,
             q=self._batchSize,
@@ -243,9 +242,6 @@ if __name__ == "__main__":
     def funcEval(config): 
         global iter
         filename = folder + f"/run{iter}.log"
-
-        #import pdb
-        #pdb.set_trace()
 
         ret = run(command, config, timeout, filename)
         results = [refpoint, ] * nobjs
