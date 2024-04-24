@@ -5,6 +5,8 @@ import gpytorch
 import numpy as np
 from torch.nn.modules.module import Module
 
+from gpytorch.likelihoods import GaussianLikelihood
+from botorch.models import SingleTaskGP, ModelList
 
 class MixedDiffusionKernel(gpytorch.kernels.Kernel):
     def __init__(self,
@@ -44,8 +46,8 @@ class MixedDiffusionKernel(gpytorch.kernels.Kernel):
         :param x1, x2: each row is a vector with vertex numbers starting from 0 for each 
         :return:
         """
-        if diagonal:
-            assert x2 is None
+        #if diagonal:
+        #    assert x2 is None
         stabilizer = 0
         if x2 is None:
             x2 = x1
@@ -145,7 +147,8 @@ class HyGP(ExactGP, GPyTorchModel):
         super().__init__(train_X, train_Y.squeeze(-1), GaussianLikelihood())
 
         # floating() + sys + fp + gp + dp + routing
-        n_vertices = [7] * 3 + [105] * 105 + [7] * 4 + [10] * 10 + [3] * 3 + [9] * 9
+        n_vertices = [4] * 105 + [3] * 4 + [5] * 10 + [4] * 3 + [5] * 9 + [4] * 3
+
         adjacency_mat = []
         fourier_freq = []
         fourier_basis = []
@@ -169,15 +172,18 @@ class HyGP(ExactGP, GPyTorchModel):
 
         self.mean_module = ConstantMean()
         self.covar_module = MixedDiffusionKernel(log_order_variances=log_order_variances, grouped_log_beta=grouped_log_beta,
-            fourier_freq_list=fourier_freq_list,
-            fourier_basis_list=fourier_basis_list, lengthscales=lengthscales,
-            num_discrete=num_discrete, num_continuous=num_continuous)
+                fourier_freq_list=fourier_freq_list,
+                fourier_basis_list=fourier_basis_list, lengthscales=lengthscales,
+                num_discrete=num_discrete, num_continuous=num_continuous)
 
-    def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module.forward(x)
+    def forward(self, x1, x2=None):
+        if x2 is None:
+            x2 = x1
+        mean_x = self.mean_module(x1)
+        covar_x = self.covar_module.forward(x1, x2)
         print(mean_x.shape)
         print(covar_x.shape)
+        print(covar_x)
         return MultivariateNormal(mean_x, covar_x)
 
 
@@ -190,7 +196,7 @@ if __name__ == '__main__':
     # n_vertices = [4, 4, 3, 5, 4, 5]
 
     # floating() + sys + fp + gp + dp + routing
-    n_vertices = [7] * 3 + [105] * 105 + [7] * 4 + [10] * 10 + [3] * 3 + [9] * 9
+    n_vertices = [1] * 105 + [1] * 4 + [1] * 10 + [1] * 3 + [1] * 9 + [1] * 3
 
     adjacency_mat = []
     fourier_freq = []
@@ -218,12 +224,18 @@ if __name__ == '__main__':
                               fourier_basis_list=fourier_basis_list, lengthscales=lengthscales,
                               num_discrete=num_discrete, num_continuous=num_continuous)
 
-    x1 = torch.ones([1, dimension])
-    x2 = torch.zeros([1, dimension])
-    print(kernel.forward(x1, x2))
+    x = torch.randn([1, dimension])
+    print(kernel.forward(x))
+    print("kernel success")
 
-    Xs = torch.rand([1000, dimension])
-    Ys = torch.rand([1000])
+    Xs = torch.randn([1000, dimension])
+    Ys = torch.rand([1000, 1])
     gp = HyGP(Xs[:980, :], Ys[:980])
+    #covar_module = ScaleKernel(
+    #        kernel
+    #)
+    #likelihood = GaussianLikelihood()
+
+    #gp = SingleTaskGP(Xs[:980, :], Ys[:980], covar_module=covar_module, likelihood=likelihood)
     a = gp.forward(Xs[980:, :])
     print(a.sample())
