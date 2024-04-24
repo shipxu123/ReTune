@@ -121,6 +121,7 @@ class VanillaBO:
             q=self._batchSize,
             num_restarts=self._numRestarts,
             raw_samples=self._rawSamples,  # used for intialization heuristic
+            fixed_features_list=[],
             options={"batch_limit": 5, "maxiter": 200},
         )
         # observe new values 
